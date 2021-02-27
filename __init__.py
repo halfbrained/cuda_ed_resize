@@ -1,0 +1,1 @@
+from .ed_resize import Command

@@ -1,0 +1,26 @@
+[info]
+title=Tab Group Resizer
+desc=Allows to toggle maximize/minimize current tab group
+type=cudatext-plugin
+subdir=cuda_ed_resize
+homepage=https://github.com/halfbrained/cuda_ed_resize
+
+[item1]
+section=events
+events=on_exit
+
+[item2]
+section=commands
+caption=Tab Group Resizer\Toggle maximize editor group
+method=tgl_max
+
+[item3]
+section=commands
+caption=Tab Group Resizer\Toggle minimize editor group
+method=tgl_min
+
+[item60]
+section=commands
+caption=Tab Group Resizer\Config
+method=config
+menu=o
