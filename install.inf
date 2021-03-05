@@ -7,7 +7,7 @@ homepage=https://github.com/halfbrained/cuda_ed_resize
 
 [item1]
 section=events
-events=on_exit
+events=on_exit,on_focus
 
 [item2]
 section=commands
@@ -16,8 +16,13 @@ method=tgl_max
 
 [item3]
 section=commands
-caption=Tab Group Resizer\Toggle minimize editor group
+caption=Tab Group Resizer\Minimize editor group
 method=tgl_min
+
+[item4]
+section=commands
+caption=Tab Group Resizer\Reset group sizes
+method=reset_sizes
 
 [item60]
 section=commands
