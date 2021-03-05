@@ -1,5 +1,5 @@
 2021.03.05
-+ add: clicking on minimized group expands it is not focused
++ add: clicking on minimized group expands if it is not focused
 * change: 'Minimize' now is not a toggle, but just minimizes current group
 
 2021.02.27
