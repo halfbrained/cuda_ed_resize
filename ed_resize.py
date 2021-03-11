@@ -60,43 +60,31 @@ class Command:
 
         #pass; print(f'MAX: Grouping:{grouping}')
 
-        if self.try_revert(grouping, minimizing=False):
-            return
-
         if grouping == GROUPS_ONE:
             return
 
-        layout = LAYOUTS[grouping]
+        l = Layout()
+        self.l = l
 
-        edi = ed.get_prop(PROP_INDEX_GROUP)
-        edis = 'e'+str(edi)
+        if self.try_revert_max(grouping):
+            return
 
-        lw = len(layout)
-        lh = len(layout[0])
-        edcells = self._get_ed_layout_cells(layout, edis)
-        x,y = edcells[0]
+        x,y = l.curpos
 
         spl_poss = []
-        for i in range(lw):
-            for j in range(lh):
-                item = layout[i][j]
-                if type(item) != int: # not splitter - skip
-                    continue
-                if x != i  and  j != y: # not on editor axis - skip
-                    continue
-
-                spl_id = item
-                if i < x  or  j < y: 
-                    spl_poss.append((spl_id, 0))
-                else: 
-                    _isvert, _isvis, _pos, size = app_proc(PROC_SPLITTER_GET, spl_id)
-                    if spl_id in LAYOUT_SPLITTERS[grouping]:
-                        spl_poss.append((spl_id, size))
+        splsx,splsy = l.enum_spls('x', x, y), l.enum_spls('y', x, y)
+        for i,j,spl_id in [*splsx, *splsy]:
+            if i < x  or  j < y:
+                spl_poss.append((spl_id, 0))
+            else:
+                spl = l.spl_info(spl_id)
+                if spl_id in LAYOUT_SPLITTERS[grouping]:
+                    spl_poss.append((spl_id, spl.size))
 
         #pass; print(f' + MAX:spl poss: {spl_poss}')
 
-        # save for try_revert
-        self._last_config = (grouping, edi, self._get_splitters_ratios())
+        # save for try_revert_max
+        self._last_config = (grouping, l.gind, self._get_splitters_ratios())
 
         self.set_splitters_pos(grouping, *spl_poss)
 
@@ -111,109 +99,95 @@ class Command:
 
         #pass; print(f'MIN: Grouping:{grouping}')
 
-        layout = LAYOUTS[grouping]
+        l = Layout()
+        self.l = l
+        x,y = l.curpos
 
-        x,y, resizes = self._prepare_resizes(layout)
-        nres = len(resizes)
+        resizes = self._prepare_resizes()
 
         # check if corner on T-intersec
         if len(resizes) == 2:
             r0,r1 = resizes
+            dirx = 1 if -r0[1] > 0 else -1
+            diry = 1 if -r1[1] > 0 else -1
+            splx,sply = self._get_layout_splitters(x, y, dirx, diry)
+            
+            if r0[0] != r1[0]  and  (splx != 0 and sply != 0):
 
-            dirx = -r0[1]
-            diry = -r1[1]
-            dirx = 1 if dirx > 0 else -1
-            diry = 1 if diry > 0 else -1
-            splx,sply = self._get_layout_splitters(layout, x, y, dirx, diry)
-
-            if resizes[0][0] != resizes[1][0]:
-                if type(layout[splx][sply+diry]) == str: # found editor - T intersec
+                if type(l.layout[splx][sply+diry]) == str: # found editor - T intersec
                     resizes = [r0] # x resize
 
-                elif type(layout[splx+dirx][sply]) == str:
+                elif type(l.layout[splx+dirx][sply]) == str:
                     resizes = [r1] # y resize
-
-        #self._last_config = (grouping, edi, self._get_splitters_ratios())
 
         if len(resizes) == 2:
             r0,r1 = resizes
             if r0[0] != r1[0]: # x,y - corner
                 resizes = [r for r in resizes if r[0] in option_minimize_xy]
+
             else:
                 resizes = [resizes[0]]
-
-        self.save_group_ratios(layout, x, y, edi, grouping)
+                
+        self.save_group_ratios(x, y, edi, grouping)
 
         for r in resizes:
             ax = r[0]
-            _size, items = self._get_ax_layout(ax, layout, x, y, minimized_group=edi)
+            items = self._get_min_ax_layout(ax, minimized_group=edi)
             self.set_splitters_pos(grouping, *items)
 
         if option_min_focus == 1:
-            self.focus_last_ed(layout)
+            self.focus_last_ed(skip_group=self.l.gind)
+            
 
     def unmin_group(self, group):
         grouping = app_proc(PROC_GET_GROUPING, '')
         if grouping == GROUPS_ONE:
             return
-            
-        layout = LAYOUTS[grouping]
 
-        edt = ed_group(group) #TODO can be none?
+        l = Layout()
+        self.l = l
+        x,y = l.curpos
+
+        edt = ed_group(group)
         rx,ry,saved_grouping = self.group_ratios.get(group, (None, None, None))
-        edis = 'e'+str(group)
 
         if saved_grouping != grouping:
             rx,ry = 1,1
 
-        cells = self._get_ed_layout_cells(layout, 'e'+str(group))
-        x,y = cells[0]  # first active ed group:  0,0 - top left
-
-        (w,spl_w),(h,spl_h) = self._get_ed_size('x', layout, x, y), self._get_ed_size('y', layout, x, y)
+        (w,spl_w),(h,spl_h) = l.get_ed_size('x'), l.get_ed_size('y')
 
         def unmin_ax(ax, ratio, ed_size): #SKIP
             if ed_size < 0:
                 return False
 
-            #  size, before:[(ed_ind, spl_id, pos)],  after:[...]
-            size, items = self._get_ax_layout(ax, layout, x, y)
+            size = l.size(ax)
 
-            if ed_size < 20  and  size != -1: # expand horizontally
+
+            if ed_size < 30  and  size != -1: # expand horizontally
                 ratio = ratio or 1
 
-                prev_pos = 0
-                groups_widths = []
-                spl_w = 0
-                for ed_s, spl_id, pos in items:
-                    groups_widths.append(pos - prev_pos - spl_w)
-                    prev_pos = pos
-                    spl_w = 4
-                groups_widths.append(size - prev_pos - 4)
-                opened_group_widths = [gsize for gsize in groups_widths  if gsize > 20]
+                ax_grs = l.enum_groups(ax=ax, ax_x=x, ax_y=y)
+                group_sizes = [l.get_ed_size(ax, (x,y))[0] for x,y,gr_s in ax_grs]
 
-                #average_width = sum(groups_widths) / len(groups_widths)
-                new_average_width = sum(opened_group_widths) / (len(opened_group_widths) + 1)
+                group_opened_sizes = [w for w in group_sizes  if w > 30]
 
-                new_gr_size = int(ratio*new_average_width)
+                # not sure why +1 works...
+                new_average_width = (sum(group_opened_sizes) + ed_size) / (len(group_opened_sizes) + 1)
+                new_gr_size = round(ratio*new_average_width)
 
                 spl_poss = []
-                prev_old = 0
-                prev_new = 0
-                spl_w = 0
-                for ed_s, spl_id, pos in items:
-                    prev_new += 4  if prev_new > 0 else  0 # 4=splitter width
-
-                    if ed_s == edis:
-                        newpos = int(prev_new + new_gr_size)
+                prev_old, prev_new, spl_w = 0, 0, 0
+                for gr_s,spl_id,pos in l.enum_pairs(ax, x, y):
+                    if gr_s == l.edis:
+                        newpos = round(prev_new + spl_w + new_gr_size)
                     else:
-                        #newpos = int(prev_new + (pos - prev_old)*(1 - ratio))
-                        prev_ratio = (pos - prev_old - spl_w)/(sum(opened_group_widths))
-                        space_left = (sum(opened_group_widths)+10 - new_gr_size)
-                        newpos = int(prev_new + space_left*prev_ratio + 1)
+                        prev_ratio = (pos - prev_old - spl_w)/(sum(group_opened_sizes))
+                        space_left = (sum(group_opened_sizes)+10 - new_gr_size)
+                        newpos = round(prev_new + spl_w + space_left*prev_ratio) - 1
+
 
                     spl_poss.append((spl_id, newpos))
-                    prev_old = pos
-                    prev_new = newpos
+                    prev_old, prev_new = pos, newpos 
                     spl_w = 4
 
                 self.set_splitters_pos(grouping, *spl_poss)
@@ -230,69 +204,57 @@ class Command:
         if grouping == GROUPS_ONE:
             return
 
-        layout = LAYOUTS[grouping]
-        lw = len(layout)
-        lh = len(layout[0])
+        l = Layout()
+        self.l = l
 
-        spls_info = {}
-        for spl_id in SPLITTERS:
-            info = app_proc(PROC_SPLITTER_GET, spl_id)
-            _isvert, isvis, _pos, _size = info
-
-            if isvis: 
-                spls_info[spl_id] = info
+        spls_vis = {spl_id:(x,y,spl_id)  for x,y,spl_id in l.enum_spls()  if l.spl_info(spl_id).isvis}
 
         resizes = []
-        for x in range(lw):
-            for y in range(lh):
-                spl_id = layout[x][y]
-                if type(spl_id) == int  and  spl_id in spls_info: 
-                    isvert, _isvis, pos, size = spls_info[spl_id]
-                    del spls_info[spl_id]
-
-                    lcount = lw  if isvert else  lh
-                    lpos = x  if isvert else  y
-                    edsize = size/((lcount+1)/2)
-                    newpos = edsize * ((lpos+1)/2)
-                    resizes.append((spl_id, int(newpos)))
+        for x,y,spl_id in spls_vis.values():
+            spl = l.spl_info(spl_id)
+            lcount = l.lw  if spl.isvert else  l.lh
+            lpos = x  if spl.isvert else  y
+            edsize = spl.size/((lcount+1)/2)
+            newpos = edsize * ((lpos+1)/2)
+            resizes.append((spl_id, int(newpos)))
 
         self.set_splitters_pos(grouping, *resizes)
 
-    def try_revert(self, grouping, minimizing):
+    def try_revert_max(self, grouping):
         if self._last_config is not None:
             last_grouping, active_group, splitters = self._last_config
             self._last_config = None
 
-            if grouping == last_grouping:
-                self._dbg_last_config = self._last_config
-                self.load_splitters_ratios(grouping, splitters)
+            # check that other groups are minimized
+            grs = {gr_s:(x,y,gr_s)  for x,y,gr_s in self.l.enum_groups()  if gr_s != self.l.edis} # except active
+            for x,y,gr_s in grs.values():
+                sizex,sizey = self.l.get_ed_size('x', (x,y))[0], self.l.get_ed_size('y', (x,y))[0]
+                if (sizex == -1 or sizex > 30)  and  (sizey == -1 or sizey > 30):
+                    return
 
-                # focus previous focussed group
-                if minimizing:
-                    e = ed_group(active_group)
-                    if e:
-                        e.focus()
+            if grouping == last_grouping:
+                self.load_splitters_ratios(grouping, splitters)
                 return True
 
-    def save_group_ratios(self, layout, x, y, edi, grouping):
-        rx = self._get_group_ratio('x', layout, x, y)
-        ry = self._get_group_ratio('y', layout, x, y)
+    def save_group_ratios(self, x, y, edi, grouping):
+        rx = self._get_group_ratio('x', x, y)
+        ry = self._get_group_ratio('y', x, y)
 
         self.group_ratios[edi] = (rx,ry,grouping)
 
     def set_splitters_pos(self, grouping, *args):
         """args: (splitter_id, pos), (...), ...
         """
+
         spls = [*args]
-        main_isvert, _isvis, _pos, msize = app_proc(PROC_SPLITTER_GET, spls[0][0])
+        main_spl = self.l.spl_info(spls[0][0])
 
         target_splitters = {spl_id for spl_id,pos in spls}
-        # get current positions
-        for spl_id in SPLITTERS:
-            if spl_id not in target_splitters   and   spl_id in LAYOUT_SPLITTERS[grouping]:
-                    isvert, _isvis, pos, size = app_proc(PROC_SPLITTER_GET, spl_id)
-                    if main_isvert == isvert:
-                        spls.append((spl_id, pos))
+
+        # add current position of unaffected splitters
+        other_spls = [(spl_id,self.l.spl_info(spl_id)) for spl_id in SPLITTERS
+                    if spl_id not in target_splitters   and   spl_id in LAYOUT_SPLITTERS[grouping]]
+        spls += [(spl_id, spl.pos) for spl_id,spl in other_spls  if spl.isvert == main_spl.isvert]
 
         # move splitter to start
         for spl_id,_pos in spls:
@@ -301,8 +263,8 @@ class Command:
         spls.sort()   # now haw all splitters in order
 
         # compress rightmost minimized
-        prev_pos = msize
-        prev_new = msize
+        prev_pos = main_spl.size
+        prev_new = main_spl.size
         for i in range(len(spls)-1,-1,-1):
             spl_id,pos = spls[i]
             if prev_pos - pos > 30:
@@ -315,171 +277,111 @@ class Command:
         for spl_id,pos in spls:
             app_proc(PROC_SPLITTER_SET, (spl_id, pos)) # move splitter to start
 
-        #pass; print(f'>>> applying spliters : {spls}')
+        #pass; print(f'>>> applying spliters : {spls} =>   {[(spl_id, app_proc(PROC_SPLITTER_GET, spl_id)[2]) for spl_id in LAYOUT_SPLITTERS[grouping]]}')
 
     def load_splitters_ratios(self, grouping, ratios):
         resizes = []
         for spl_id,ratio in zip(SPLITTERS, ratios):
-            _isvert, _isvis, _pos, size = app_proc(PROC_SPLITTER_GET, spl_id)
-
             if spl_id in LAYOUT_SPLITTERS[grouping]:
-                newpos = int(size*ratio)
+                spl = self.l.spl_info(spl_id)
+                newpos = int(spl.size*ratio)
                 resizes.append((spl_id, newpos))
         self.set_splitters_pos(grouping, *resizes)
 
-    def focus_last_ed(self, layout):
-        timed_eds = []
-        for i in range(6):
-            ed = ed_group(i) 
-            if ed is not None:
-                timed_eds.append((ed.get_prop(PROP_ACTIVATION_TIME), ed, i))
+    def focus_last_ed(self, *args, skip_group=None):
+        l = Layout()
+        geds = ((i,ed_group(i)) for i in range(6)  if skip_group is None or skip_group != i)
+        timed_eds = [(ed.get_prop(PROP_ACTIVATION_TIME), ed, 'e'+str(i))  for i,ed in geds  if ed is not None]
 
         timed_eds.sort(key=lambda item: item[0], reverse=True)
-        for _time, ed, group in timed_eds:
-            cells = self._get_ed_layout_cells(layout, 'e'+str(group))
-            x,y = cells[0]  # first active ed group:  0,0 - top left
-            (w,spl_w),(h,spl_h) = self._get_ed_size('x', layout, x, y), self._get_ed_size('y', layout, x, y)
+        for _time, ed, gr_s in timed_eds:
+            x,y,_item = next((x,y,item)  for x,y,item in l.enum_layout()  if item == gr_s)
+            (w,spl_w),(h,spl_h) = l.get_ed_size('x', (x,y)), l.get_ed_size('y', (x,y))
 
-            if (w == -1 or w > 20) and (h == -1 or h > 20):
+            if (w == -1 or w > 30) and (h == -1 or h > 30):
                 ed.focus()
+                return True
 
-    def _get_ax_layout(self, ax, layout, x, y, minimized_group=None):
 
-        if ax == 'x':
-            vec = [layout[i][y] for i in range(len(layout))]
-            vecpos = x
-        else:
-            vec = layout[x]
-            vecpos = y
+    def _get_min_ax_layout(self, ax, minimized_group):
 
-        if len(vec) == 1: # one high/wide - cant un-min
-            return -1, None #TODO handle
+        if self.l.size(ax) == -1: # one high/wide - cant un-min
+            return -1, None 
 
-        res = []
-        for ed,spl in zip(vec[::2], vec[1::2]):
-            if spl is not None:
-                _isvert, _isvis, pos, size = app_proc(PROC_SPLITTER_GET, spl)
-            else: # last
-                pos = size
-            res.append((ed, spl, pos))
+        l = self.l
 
-        if minimized_group is not None:
-            work = [*res]
-            res.clear()
-            min_edis = 'e'+str(minimized_group)
+        resizes = []
+        work = list(l.enum_pairs(ax, l.x, l.y))
+        min_edis = 'e'+str(minimized_group)
 
-            # find current size of minimizeable group
-            gr_size = -1
-            min_total_size = 0
-            prev_pos = 0
-            spl_w = 0
-            for gr_edis,spl,pos in work:
-                if gr_edis == min_edis:
-                    gr_size = pos - prev_pos - spl_w
-                if pos - prev_pos <= 20:
-                    min_total_size += pos - prev_pos - spl_w
-                prev_pos = pos
-                spl_w = 4
-
-            if gr_size == -1:
-                gr_size = size - prev_pos - spl_w
-            if size - prev_pos <= 20:
-                min_total_size += size - prev_pos - spl_w
-
-            worksize = size - min_total_size - 4*len(work)
-            prev_new = 0
-            prev_old = 0
-            spl_w = 0
-            for gr_edis,spl,pos in work:
-                if gr_edis == min_edis: # minimizeable group
-                    newpos = round(prev_new + 10) #TODO proper minimized group size?
+        ax_grs = l.enum_groups(ax=ax, ax_x=l.x, ax_y=l.y)
+        group_sizes = [l.get_ed_size(ax, (x,y))[0] for x,y,gr_s in ax_grs]
+        min_sizes = list(w for w in group_sizes  if w <= 30)
+        gr_size, _spl_w = l.get_ed_size(ax, (l.x,l.y)) # current size of minimizeable group
+        min_total_size = sum(min_sizes)
+        
+        if len(group_sizes) == 2  and  group_sizes[0] < 30: # first of two - minimized => minimize second
+            x,y,spl_id = next(l.enum_spls(ax, ax_x=l.x, ax_y=l.y))
+            newpos = l.size(ax) - 10
+            resizes.append((spl_id,newpos))
+        else: # normal
+            prev_new, prev_old, spl_w = 0, 0, 0
+            worksize = l.size(ax) - min_total_size - 4*len(work)
+            for gr_s,spl_id,pos in work:
+                if gr_s == min_edis: # minimizeable group
+                    newpos = round(prev_new + 10)
                 else: # other groups
-                    edt = ed_group(int(gr_edis[1:]))
-                    #axsize = self._get_ed_size(edt, ax)
+                    edt = ed_group(int(gr_s[1:]))
                     axsize = pos - prev_old - spl_w
                     ratio = axsize/(worksize-(gr_size-10))
 
-                    if axsize > 20: # not minimized
+                    if axsize > 30: # not minimized
                         newpos = round(prev_new + (pos - prev_old + (gr_size-10)*ratio))
                     else: # minimized - keep size
                         newpos = round(prev_new + (pos - prev_old))
-                res.append((spl,newpos)) # different format
+                resizes.append((spl_id,newpos)) # different format
 
                 prev_new = newpos
                 prev_old = pos
                 spl_w = 4
 
-        return size, res
+        return resizes
 
-    def _get_next_spls(self, ax, layout, x, y):
-        if ax == 'x': # row
-            before = [layout[i][y] for i in range(x)  if type(layout[i][y]) == int]
-            after = [layout[i][y] for i in range(x, len(layout)) if type(layout[i][y]) == int]
-        else: # column
-            before = [spl for spl in layout[x][:y]  if type(spl) == int]
-            after = [spl for spl in layout[x][y:]  if type(spl) == int]
-
-        return before,after
-
-    def _get_group_ratio(self, ax, layout, x, y):
-        spl_before, spl_after = self._get_next_spls(ax, layout, x, y)
+    def _get_group_ratio(self, ax, x, y):
+        spls = list(self.l.enum_spls(ax, ax_x=x, ax_y=y))
+        spl_before = [spl_id  for sx,sy,spl_id in spls  if sx <= x and sy <= y]
+        spl_after =  [spl_id  for sx,sy,spl_id in spls  if sx >= x and sy >= y]
 
         if not spl_before and not spl_after: # one editor high|wide layyuyt
             return -1
 
-        prev_pos = 0
-        groups_widths = []
-        for spl in spl_before+spl_after:
-            #prev_pos += 4  if prev_pos > 0 else  0
+        ax_grs = self.l.enum_groups(ax=ax, ax_x=x, ax_y=y)
+        group_sizes = (self.l.get_ed_size(ax, (x,y))[0] for x,y,gr_s in ax_grs)
+        group_opened_sizes = [w for w in group_sizes  if w > 30]
 
-            _isvert, _isvis, pos, size = app_proc(PROC_SPLITTER_GET, spl)
-            if pos - prev_pos > 20:
-                groups_widths.append(pos - prev_pos)
-            prev_pos = pos
-        #prev_pos += 4
-        if size - prev_pos > 20: 
-            groups_widths.append(size - prev_pos)
+        gr_size,spl_w = self.l.get_ed_size(ax, (x,y))
 
-        if spl_before:
-            _isvert, _isvis, pos, size = app_proc(PROC_SPLITTER_GET, spl_before[-1])
-            start = pos
-        else:
-            start = 0
-
-        if spl_after:
-            _isvert, _isvis, pos, size = app_proc(PROC_SPLITTER_GET, spl_after[0])
-            end = pos
-        else:
-            end = size
-
-        #return (end-start)/size # percent of layout
-
-        average_width = sum(groups_widths) / len(groups_widths)
-        r = (end-start) / average_width
-        commons = [1, 5/6, 0.75, 0.5]
+        average_width = sum(group_opened_sizes) / len(group_opened_sizes)
+        r = gr_size / average_width
+        commons = [1, 5/6, 0.75, 0.5, 1/3, 0.25, 1/6]
         for common in commons:
             delta = abs(r-common)
             if delta < common*0.04:
                 r = common
                 break
+
         return r # percent above 'average''
 
-    def _prepare_resizes(self, layout):
-        edi = ed.get_prop(PROP_INDEX_GROUP)
-        edis = 'e'+str(edi)
+    def _prepare_resizes(self):
+        l = self.l
 
-        lw = len(layout)
-        lh = len(layout[0])
-        cells = self._get_ed_layout_cells(layout, edis)
+        edw = sum(True for x,y,item in l.enum_layout(ax_y=l.y)  if item == l.edis)
+        edh = sum(True for x,y,item in l.enum_layout(ax_x=l.x)  if item == l.edis)
 
-        x,y = cells[0]  # first active ed group:  0,0 - top left
-        edw = len([True for i in range(x,lw)  if layout[i][y] == edis])
-        edh = len([True for i in range(y,lh)  if layout[x][i] == edis])
-
-        is_edge_l = x == 0
-        is_edge_t = y == 0
-        is_edge_r = x + edw == lw
-        is_edge_b = y + edh == lh
+        is_edge_l = l.x == 0
+        is_edge_t = l.y == 0
+        is_edge_r = l.x + edw == l.lw
+        is_edge_b = l.y + edh == l.lh
         edgen = sum((is_edge_l, is_edge_t, is_edge_r, is_edge_b))
         iscorner = edgen == 2 and (is_edge_t != is_edge_b  and  is_edge_l != is_edge_r)
 
@@ -495,7 +397,7 @@ class Command:
             if is_edge_r: resizes.append(('x', +1))
         else:
             if edgen == 2: # between others
-                if lh == 1:
+                if l.lh == 1:
                     resizes = [('x', +0.5), ('x', -0.5)]
                 else:
                     resizes = [('y', +0.5), ('y', -0.5)]
@@ -507,86 +409,142 @@ class Command:
 
         resizes.sort()
 
-        return x,y, resizes
+        return resizes
 
-    def _get_ed_layout_cells(self, layout, edis):
-        lw = len(layout)
-        lh = len(layout[0])
-        cells = []
-        for x in range(lw):
-            for y in range(lh):
-                if layout[x][y] == edis:
-                    cells.append((x,y))
-        return cells
-
-    def _get_layout_splitters(self, layout, x, y, dirx, diry):
-        lw = len(layout)
-        lh = len(layout[0])
-
+    def _get_layout_splitters(self, x, y, dirx, diry):
         splx = 0
         sply = 0
         if dirx != 0:
-            for i in range(1,lw):
-                if type(layout[x+dirx*i][y]) == int: # found splitter
+            for i in range(1, self.l.lw):
+                if type(self.l.layout[x+dirx*i][y]) == int: # found splitter
                     splx = x+dirx*i
                     break
         if diry != 0:
-            for i in range(1,lh):
-                if type(layout[x][y+diry*i]) == int: # found splitter
+            for i in range(1, self.l.lh):
+                if type(self.l.layout[x][y+diry*i]) == int: # found splitter
                     sply = y+diry*i
                     break
         return splx, sply
 
     def _get_splitters_ratios(self):
-        res = []
-        for spl_id in SPLITTERS:
-            _isvert, _isvis, pos, size = app_proc(PROC_SPLITTER_GET, spl_id)
-            res.append(pos/size)
-        return res
+        spls = (self.l.spl_info(spl_id)  for spl_id in SPLITTERS)
+        return [spl.pos/spl.size  for spl in spls]
 
-    #def _get_ed_size(self, ed, ax):
-        #l,t,r,b = ed.get_prop(PROP_COORDS)
-        #return r-l  if ax == 'x' else  b-t
-    def _get_ed_size(self, ax, layout, x, y):
-        spl_before, spl_after = self._get_next_spls(ax, layout, x, y)
+class Layout:
+    def __init__(self):
+        self._spl_cache = {}
 
-        if not spl_before and not spl_after: # one editor high|wide layyuyt
+        self.grouping = app_proc(PROC_GET_GROUPING, '')
+        self.gind = ed.get_prop(PROP_INDEX_GROUP)
+        self.edis = 'e'+str(self.gind)
+
+        self.layout = LAYOUTS[self.grouping]
+        self.lw = len(self.layout)
+        self.lh = len(self.layout[0])
+
+        self.curpos = next((x,y)  for x,y,litem in self.enum_layout()  if litem == self.edis)
+        self.x, self.y = self.curpos
+
+    def enum_layout(self, ax=None, ax_x=None, ax_y=None):
+        if ax is not None:
+            ax_x,ax_y = (None,ax_y)  if ax == 'x' else  (ax_x,None)
+        
+        for x in range(self.lw):
+            for y in range(self.lh):
+                if (ax_x is not None and ax_x != x) or (ax_y is not None and ax_y != y):
+                    continue
+                yield (x, y, self.layout[x][y])
+
+    def enum_spls(self, ax=None, ax_x=None, ax_y=None):
+        return self._enum_type(int, ax, ax_x, ax_y)
+
+    def enum_groups(self, ax=None, ax_x=None, ax_y=None):
+        return self._enum_type(str, ax, ax_x, ax_y)
+
+    def _enum_type(self, tp, ax=None, ax_x=None, ax_y=None):
+        lgen = self.enum_layout(ax, ax_x=ax_x, ax_y=ax_y)
+        
+        gen = ((x,y,item)  for x,y,item in lgen  if type(item) == tp)
+        if ax is not None  or  ((ax_x is None) != (ax_y is None)): # one row/col
+            yield from gen
+        # if not row - give unique items
+        got = set()
+        for x,y,item in gen:
+            if item not in got:
+                got.add(item)
+                yield (x,y,item)
+            
+    def enum_pairs(self, ax, ax_x, ax_y):
+        """returns ( (group, spl, spl_pos), ...)
+            * last group is not included - has no splitter after it
+        """
+        gs = self.enum_groups(ax, ax_x, ax_y)
+        ss = self.enum_spls(ax, ax_x, ax_y)
+        yield from ((g[2], s[2], self.spl_info(s[2]).pos)  for g,s in zip(gs, ss))
+
+    @property
+    def vsize(self):  # groups' space dimensions px
+        return self.size(ax='y')
+    @property
+    def hsize(self):  # groups' space dimensions px
+        return self.size(ax='x')
+
+    def size(self, ax): # test on 1-group size
+        vert = ax == 'y'
+        for _x,_y,spl_id in self.enum_spls():
+            spl = self.spl_info(spl_id)
+            if vert != spl.isvert and spl.isvis: # vertical splitter gives horizontal size
+                return spl.size
+        return 1
+
+    def get_ed_size(self, ax, pos=None):
+        x,y = self.curpos  if pos == None else  pos # default to current position
+
+        vec = list(self.enum_layout(ax=ax, ax_x=x, ax_y=y))
+        vecpos = x  if ax == 'x' else  y
+        before = [item for x,y,item in vec[vecpos::-1]  if type(item) == int][0:1] # [firt splitter] before current
+        after =  [item for x,y,item in vec[vecpos+1:]     if type(item) == int][0:1] # [first spl] after
+        
+        if not before and not after:
             return -1,-1
 
-        prev_pos = 0
-        for spl in spl_before+spl_after:
-            _isvert, _isvis, pos, size = app_proc(PROC_SPLITTER_GET, spl)
-            prev_pos = pos
-
-        if spl_before:
+        if before:
             spl_w = 4
-            _isvert, _isvis, pos, size = app_proc(PROC_SPLITTER_GET, spl_before[-1])
-            start = pos
+            start = self.spl_info(before[0]).pos
         else:
             spl_w = 0
             start = 0
 
-        if spl_after:
-            _isvert, _isvis, pos, size = app_proc(PROC_SPLITTER_GET, spl_after[0])
-            end = pos
+        if after:
+            end = self.spl_info(after[0]).pos
         else:
-            end = size
-        return end-start, spl_w
+            end = self.size(ax=ax)
+
+        return end-start,spl_w
+
+    def spl_info(self, spl_id):
+        if spl_id not in self._spl_cache:
+            self._spl_cache[spl_id] = Splitter(app_proc(PROC_SPLITTER_GET, spl_id))
+        return self._spl_cache[spl_id]
+
+class Splitter:
+    def __init__(self, t):
+        self.isvert, self.isvis, self.pos, self.size = t
 
 # [y][x] - convenient format to write, rotated to [x][y] next
 LAYOUTS = { # grouping -> layout
     GROUPS_2VERT: [ ['e0', SPLITTER_G1, 'e1']],
 
-    GROUPS_2HORZ: [ ['e0'], 
-                    [SPLITTER_G1], 
+    GROUPS_2HORZ: [ ['e0'],
+                    [SPLITTER_G1],
                     ['e1']],
 
     GROUPS_3VERT: [ ['e0', SPLITTER_G1, 'e1', SPLITTER_G2, 'e2']],
 
-    GROUPS_3HORZ: [ ['e0'], 
-                    [SPLITTER_G1], 
-                    ['e1'], 
-                    [SPLITTER_G2], 
+    GROUPS_3HORZ: [ ['e0'],
+                    [SPLITTER_G1],
+                    ['e1'],
+                    [SPLITTER_G2],
                     ['e2']],
 
     GROUPS_1P2VERT:[['e0', SPLITTER_G3, 'e1'],
@@ -599,40 +557,40 @@ LAYOUTS = { # grouping -> layout
 
     GROUPS_4VERT: [ ['e0', SPLITTER_G1, 'e1', SPLITTER_G2, 'e2', SPLITTER_G3, 'e3']],
 
-    GROUPS_4HORZ: [ ['e0'], 
-                    [SPLITTER_G1], 
-                    ['e1'], 
-                    [SPLITTER_G2], 
+    GROUPS_4HORZ: [ ['e0'],
+                    [SPLITTER_G1],
+                    ['e1'],
+                    [SPLITTER_G2],
                     ['e2'],
-                    [SPLITTER_G3], 
+                    [SPLITTER_G3],
                     ['e3']],
 
-    GROUPS_4GRID: [ ['e0',          SPLITTER_G1, 'e1'], 
-                    [SPLITTER_G3,   SPLITTER_G3, SPLITTER_G3], 
+    GROUPS_4GRID: [ ['e0',          SPLITTER_G1, 'e1'],
+                    [SPLITTER_G3,   SPLITTER_G3, SPLITTER_G3],
                     ['e2',          SPLITTER_G1, 'e3']],
                     #['e2',          SPLITTER_G2, 'e3']], - G2 follows G1, so no need for it
 
     GROUPS_6VERT: [ ['e0', SPLITTER_G1, 'e1', SPLITTER_G2, 'e2', SPLITTER_G3, 'e3', SPLITTER_G4, 'e4', SPLITTER_G5, 'e5']],
 
-    GROUPS_6HORZ: [ ['e0'], 
-                    [SPLITTER_G1], 
-                    ['e1'], 
-                    [SPLITTER_G2], 
+    GROUPS_6HORZ: [ ['e0'],
+                    [SPLITTER_G1],
+                    ['e1'],
+                    [SPLITTER_G2],
                     ['e2'],
-                    [SPLITTER_G3], 
+                    [SPLITTER_G3],
                     ['e3'],
-                    [SPLITTER_G4], 
+                    [SPLITTER_G4],
                     ['e4'],
-                    [SPLITTER_G5], 
+                    [SPLITTER_G5],
                     ['e5']],
 
-    GROUPS_6GRID: [ ['e0',          SPLITTER_G1, 'e1',          SPLITTER_G2, 'e2'], 
-                    [SPLITTER_G3,   SPLITTER_G3, SPLITTER_G3,   SPLITTER_G3, SPLITTER_G3], 
+    GROUPS_6GRID: [ ['e0',          SPLITTER_G1, 'e1',          SPLITTER_G2, 'e2'],
+                    [SPLITTER_G3,   SPLITTER_G3, SPLITTER_G3,   SPLITTER_G3, SPLITTER_G3],
                     ['e3',          SPLITTER_G1, 'e4',          SPLITTER_G2, 'e5']],
 }
 
-# set() of visible splitters for layouts; splitter's 'is_visible' property is problematic for this 
-LAYOUT_SPLITTERS = {} 
+# set() of visible splitters for layouts; splitter's 'is_visible' property is problematic for this
+LAYOUT_SPLITTERS = {}
 
 # transposing from [y][x] to [x][y]
 for l in LAYOUTS.values():
@@ -650,5 +608,5 @@ for grouping,layout in LAYOUTS.items():
         for item in column:
             if type(item) == int:
                 splitters.add(item)
-    
+
     LAYOUT_SPLITTERS[grouping] = splitters

@@ -1,3 +1,7 @@
+2021.03.11
+* refactored code
+- fix: check if group is maximized before un-maximizing
+
 2021.03.05
 + add: clicking on minimized group expands if it is not focused
 * change: 'Minimize' now is not a toggle, but just minimizes current group
